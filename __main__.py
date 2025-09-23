@@ -1,4 +1,3 @@
-# __main__.py
 
 import torch.multiprocessing as mp
 mp.set_start_method('fork', force=True)
@@ -18,12 +17,12 @@ def _get_free_port():
 
 def main(args):
     
-    # 获取 GPU 数量
+ 
     replica_count = device_count()
     print(f"[INFO] GPU number is {replica_count}")
 
     if args.phase == 'main':
-        # 主模型训练入口
+ 
         noise_predictor = None
         if args.use_noise_predictor:
             noise_predictor = NoisePredictor(params).cuda()
@@ -47,8 +46,7 @@ def main(args):
         else:
             train(args, params, noise_predictor=noise_predictor, use_pnp=use_pnp)
     elif args.phase == 'noise':
-        # 噪声预测器训练入口
-        # 需要确保先训练好主模型并保存在 model_dir 中
+
         train_noise_predictor(args, params)
     else:
         raise ValueError("未知的训练阶段，请指定 --phase main 或 --phase noise")
@@ -66,15 +64,14 @@ if __name__ == '__main__':
     parser.add_argument('--fp16', action='store_true', default=False,
                         help='Use 16-bit float training')
 
-    # 是否启用噪声预测器（在主模型训练中使用 PnP 策略）
+
     parser.add_argument('--use_noise_predictor', action='store_true', default=False,
                         help='Enable the NoisePredictor module in training')
 
-    # 是否启用部分噪声预测策略（PnP）
     parser.add_argument('--use_pnp', action='store_true', default=False,
                         help='Enable Partial Noise Prediction strategy')
 
-    # 新增参数: 训练阶段，"main" 或 "noise"
+
     parser.add_argument('--phase', default='main', choices=['main', 'noise'],
                         help='Training phase: main for main model training, noise for noise predictor training')
 

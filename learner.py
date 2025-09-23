@@ -33,9 +33,7 @@ def _nested_map(struct, map_fn):
         return {k: _nested_map(v, map_fn) for k, v in struct.items()}
     return map_fn(struct)
 
-##############################################
-# Multi-Scale STFT Loss 实现
-##############################################
+
 class MultiScaleSTFTLoss(nn.Module):
 
     def __init__(self, scales=[(1024, 256, 1024), (512, 128, 512), (256, 64, 256)], alpha=1.0, eps=1e-7):
@@ -49,10 +47,10 @@ class MultiScaleSTFTLoss(nn.Module):
         B, C, T = x_pred.shape
         loss = 0.0
         for (win_len, hop_len, n_fft) in self.scales:
-            # 将 [B, 1, T] 转换为 [B, T]
+          
             spec_pred = self.stft(x_pred.view(B, T), n_fft, hop_len, win_len)
             spec_gt   = self.stft(x_gt.view(B, T), n_fft, hop_len, win_len)
-            # L1 距离
+         
             l_mag = torch.mean(torch.abs(spec_pred - spec_gt))
             loss += l_mag
         loss = loss / len(self.scales)
@@ -61,20 +59,18 @@ class MultiScaleSTFTLoss(nn.Module):
     def stft(self, x, n_fft, hop_length, win_length):
       
         window = torch.hann_window(win_length, device=x.device)
-        # stft 结果 shape: [B, freqs, frames, 2]
+
         X = torch.stft(
             x, n_fft=n_fft, hop_length=hop_length, win_length=win_length,
             window=window, center=True, return_complex=False, pad_mode='reflect'
         )
-        # 计算幅度谱
+    
         real = X[..., 0]
         imag = X[..., 1]
         mag = torch.sqrt(real**2 + imag**2 + self.eps)
         return mag
 
-##############################################
-# DiffWaveLearner 类
-##############################################
+
 class DiffWaveLearner:
      
     def __init__(self, model_dir, model, dataset, optimizer, params,
@@ -86,24 +82,22 @@ class DiffWaveLearner:
         self.optimizer = optimizer
         self.params = params
 
-        self.noise_predictor = noise_predictor  # 如果启用了 --use_noise_predictor，就会传入一个实例
-        self.use_pnp = use_pnp  # 是否在训练中使用 PnP 加噪策略
+        self.noise_predictor = noise_predictor 
+        self.use_pnp = use_pnp  
 
-        # 混合精度
+ 
         self.autocast = torch.cuda.amp.autocast(enabled=kwargs.get('fp16', False))
         self.scaler = torch.cuda.amp.GradScaler(enabled=kwargs.get('fp16', False))
 
         self.step = 0
-        self.is_master = True  # 用于分布式时判断是否是主进程
+        self.is_master = True  
 
-        # 计算 noise_level 供加噪时查询
-        # noise_schedule 通常长度=50 => alpha_cum[t] = ∏_{i=1}^t (1-β_i)
         beta = np.array(self.params.noise_schedule)
         self.noise_level = np.cumprod(1 - beta).astype(np.float32)  # shape=[50]
 
         self.loss_fn = nn.L1Loss()
 
-        # 初始化多尺度 STFT 损失模块
+      
         self.ms_stft_loss = MultiScaleSTFTLoss()
 
         self.summary_writer = None
@@ -214,40 +208,24 @@ class DiffWaveLearner:
             base_noise = torch.randn_like(audio)
             noisy_audio = alpha_cum_t_sqrt * audio + (1 - alpha_cum_t).sqrt().view(-1, 1, 1) * base_noise
 
-            # 此处可根据需要开启或关闭 PnP 策略，目前注释掉
-            # if (self.noise_predictor is not None) and self.use_pnp:
-            #     predicted_noise = self.noise_predictor(noisy_audio, t)
-            #     current_pnp_steps = max(
-            #         self.params.pnp_steps_final,
-            #         int(self.params.pnp_steps_initial * (self.params.pnp_decay_rate ** (self.step // 1000)))
-            #     )
-            #     prob_pnp = max(
-            #         self.params.pnp_probability_end,
-            #         self.params.pnp_probability_start * (self.params.pnp_decay_rate ** (self.step // 1000))
-            #     )
-            #     valid_mask = (t < current_pnp_steps).float().view(-1, 1, 1)
-            #     rand_vals = torch.rand(N, device=device).view(-1, 1, 1)
-            #     prob_mask = (rand_vals < prob_pnp).float()
-            #     overall_mask = valid_mask * prob_mask
-            #     noisy_audio = noisy_audio + overall_mask * predicted_noise
+          
 
             pred_noise = self.model(noisy_audio, t, spectrogram)
             if pred_noise.dim() == 4:
                 pred_noise = pred_noise.squeeze(2)
-            # 原始噪声预测损失
+            
             noise_loss = self.loss_fn(pred_noise, base_noise)
-            # 利用预测噪声重构波形：
-            # noisy_audio = sqrt(alpha_cum_t)*audio + sqrt(1 - alpha_cum_t)*base_noise
-            # 若模型预测噪声与 base_noise 对应，则可重构为：
+          
+           
             pred_audio = (noisy_audio - (1 - alpha_cum_t).sqrt().view(-1,1,1) * pred_noise) / alpha_cum_t_sqrt
-            # 时域 L1 损失
+       
             waveform_l1 = F.l1_loss(pred_audio, audio)
-            # 多尺度 STFT 损失
+         
             stft_loss = self.ms_stft_loss(pred_audio, audio)
-            # 合并波形相关损失（你可以调整这里的权重，下面给出默认权重）
+           
             loss_lambda_stft = self.params.get("loss_lambda_stft", 1.0)
             combined_wave_loss = waveform_l1 + loss_lambda_stft * stft_loss
-            # 最终总损失
+            
             loss_lambda_noise = self.params.get("loss_lambda_noise", 1.0)
             loss_lambda_wave = self.params.get("loss_lambda_wave", 1.0)
             total_loss = loss_lambda_noise * noise_loss + loss_lambda_wave * combined_wave_loss
@@ -278,7 +256,7 @@ class DiffWaveLearner:
         writer.flush()
         self.summary_writer = writer
 
-# ------------------ 新增噪声预测器训练函数 ------------------
+
 def train_noise_predictor(args, params):
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     ckpt_path = os.path.join(args.model_dir, 'weights.pt')
@@ -289,7 +267,7 @@ def train_noise_predictor(args, params):
     main_model.load_state_dict(checkpoint['model'], strict=False)
     main_model.eval()
     for param in main_model.parameters():
-        param.requires_grad = False  # 冻结主扩散模型的所有参数
+        param.requires_grad = False 
 
     fixed_diffusion_model = copy.deepcopy(main_model)
     for param in fixed_diffusion_model.parameters():
@@ -300,10 +278,10 @@ def train_noise_predictor(args, params):
     optimizer_noise_pred = torch.optim.Adam(noise_predictor.parameters(), lr=2e-4)
 
     dataset = from_path(args.data_dirs, params)
-    dataloader = dataset  # 使用 from_path 构建的 DataLoader，确保返回 'audio' 和 'gt'
-    time_steps = params.noise_predictor_timesteps  # 例如 [12, 10, 7, 5]
+    dataloader = dataset 
+    time_steps = params.noise_predictor_timesteps  
 
-    num_epochs = 100  # 可根据需要调整
+    num_epochs = 100  
     for epoch in range(num_epochs):
         total_loss = 0.0
         num_batches = 0
@@ -317,8 +295,7 @@ def train_noise_predictor(args, params):
             if gt.dim() == 2:
                 gt = gt.unsqueeze(1)
             B = audio.shape[0]
-            # tau = int(np.random.choice(time_steps))
-            # 假设 time_steps = [12, 10, 7, 5]
+       
             tau = time_steps[epoch % len(time_steps)]
 
             t_tensor = torch.full((B,), tau, device=device, dtype=torch.long)
@@ -334,7 +311,7 @@ def train_noise_predictor(args, params):
             x_tau_standard = sqrt_alpha_bar * audio + sqrt_one_minus_alpha_bar * base_noise
 
             predicted_noise = noise_predictor(audio, t_tensor)
-            # 这里直接将预测噪声加到标准噪声中构造 x_tau
+            
             x_tau = x_tau_standard + predicted_noise
 
             spectrogram = features.get('spectrogram', None)
@@ -345,7 +322,7 @@ def train_noise_predictor(args, params):
             optimizer_noise_pred.zero_grad()
             loss.backward()
             optimizer_noise_pred.step()
-            # pbar.set_postfix(loss=float(loss))
+        
             total_loss += loss.item()
             num_batches += 1
         avg_loss = total_loss / num_batches
@@ -357,7 +334,6 @@ def train_noise_predictor(args, params):
 
 
 
-# ------------------ 原有 train() 和 train_distributed() ------------------
 def _train_impl(replica_id, model, dataset, args, params, noise_predictor=None, use_pnp=False):
     torch.backends.cudnn.benchmark = True
     optimizer = torch.optim.Adam(model.parameters(), lr=params.learning_rate)

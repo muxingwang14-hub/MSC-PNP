@@ -1,18 +1,3 @@
-# Copyright 2020 LMNT, Inc. All Rights Reserved.
-#
-# Licensed under the Apache License, Version 2.0 (the "License");
-# you may not use this file except in compliance with the License.
-# You may obtain a copy of the License at
-#
-#     http://www.apache.org/licenses/LICENSE-2.0
-#
-# Unless required by applicable law or agreed to in writing, software
-# distributed under the License is distributed on an "AS IS" BASIS,
-# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-# See the License for the specific language governing permissions and
-# limitations under the License.
-# ==============================================================================
-
 import numpy as np
 import os
 import random
@@ -39,7 +24,7 @@ class ConditionalDataset(torch.utils.data.Dataset):
     spec_filename = f'{audio_filename}.spec.npy'
     signal, _ = torchaudio.load(audio_filename)
     spectrogram = np.load(spec_filename)
-    # 这里新增 'gt' 键，作为高质量参考信号，与原始音频相同
+
     return {
         'audio': signal[0],
         'gt': signal[0],
@@ -62,7 +47,6 @@ class UnconditionalDataset(torch.utils.data.Dataset):
     audio_filename = self.filenames[idx]
     spec_filename = f'{audio_filename}.spec.npy'
     signal, _ = torchaudio.load(audio_filename)
-    # 同样返回 'gt'
     return {
         'audio': signal[0],
         'gt': signal[0],
@@ -87,7 +71,7 @@ class Collator:
           start = random.randint(0, record['audio'].shape[-1] - self.params.audio_len)
           end = start + self.params.audio_len
           record['audio'] = record['audio'][start:end]
-          record['gt'] = record['audio']  # 保持 gt 与 audio 一致
+          record['gt'] = record['audio']  
           record['audio'] = np.pad(record['audio'], (0, (end - start) - len(record['audio'])), mode='constant')
       else:
           # Filter out records that aren't long enough.
@@ -103,7 +87,7 @@ class Collator:
           start *= samples_per_frame
           end *= samples_per_frame
           record['audio'] = record['audio'][start:end]
-          record['gt'] = record['audio']  # 同步赋值
+          record['gt'] = record['audio']  
           record['audio'] = np.pad(record['audio'], (0, (end-start) - len(record['audio'])), mode='constant')
 
     audio = np.stack([record['audio'] for record in minibatch if 'audio' in record])
@@ -124,11 +108,7 @@ class Collator:
   def collate_gtzan(self, minibatch):
     ldata = []
     mean_audio_len = self.params.audio_len # change to fit in gpu memory
-    # audio total generated time = audio_len * sample_rate
-    # GTZAN statistics
-    # max len audio 675808; min len audio sample 660000; mean len audio sample 662117
-    # max audio sample 1; min audio sample -1; mean audio sample -0.0010 (normalized)
-    # sample rate of all is 22050
+
     for data in minibatch:
       if data[0].shape[-1] < mean_audio_len:  # pad
         data_audio = F.pad(data[0], (0, mean_audio_len - data[0].shape[-1]), mode='constant', value=0)
